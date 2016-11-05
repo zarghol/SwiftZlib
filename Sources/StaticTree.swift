@@ -83,21 +83,21 @@ struct StaticTree {
     
     static let staticLDesc = StaticTree(staticTree: staticLTree,
                                         extraBits: Tree.extra_lbits,
-                                        extraBase: TreeStatic.literals + 1,
-                                        elements: TreeStatic.lCodes,
-                                        maxLength: TreeStatic.maxBits)
+                                        extraBase: Constants.literals + 1,
+                                        elements: Constants.lCodes,
+                                        maxLength: Constants.maxBits)
     
     static let staticDDesc = StaticTree(staticTree: staticDTree,
                                         extraBits: Tree.extra_dbits,
                                         extraBase: 0,
-                                        elements: TreeStatic.dCodes,
-                                        maxLength: TreeStatic.maxBits)
+                                        elements: Constants.dCodes,
+                                        maxLength: Constants.maxBits)
     
     static let staticBlDesc = StaticTree(staticTree: nil,
                                          extraBits: Tree.extra_blbits,
                                          extraBase: 0,
-                                         elements: TreeStatic.blCodes,
-                                         maxLength: TreeStatic.maxBlBits)
+                                         elements: Constants.blCodes,
+                                         maxLength: Constants.maxBlBits)
     
     let staticTree: [Int]? // static tree or null
     let extraBits: [Int]?  // extra bits for each code or null

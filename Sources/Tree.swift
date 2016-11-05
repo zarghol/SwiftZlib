@@ -8,32 +8,7 @@
 
 import Foundation
 
-struct TreeStatic {
-    static let maxBits = 15
-    static let blCodes = 19
-    static let dCodes = 30
-    static let literals = 256
-    static let lengthCodes = 29
-    static let lCodes = TreeStatic.literals + 1 + TreeStatic.lengthCodes
-    static let heapSize = 2 * TreeStatic.lCodes + 1
-    
-    // Bit length codes must not exceed MAX_BL_BITS bits
-    static let maxBlBits = 7
-}
-
 final class Tree {
-    
-    // end of block literal code
-    static let endBlock = 256
-    
-    // repeat previous bit length 3-6 times (2 bits of repeat count)
-    static let rep_3_6 = 16
-    
-    // repeat a zero length 3-10 times  (3 bits of repeat count)
-    static let repz_3_10 = 17
-    
-    // repeat a zero length 11-138 times  (7 bits of repeat count)
-    static let repz_11_138 = 18
     
     // extra bits for each length code
     static let extra_lbits = [ 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0 ]
@@ -46,11 +21,7 @@ final class Tree {
     
     static let bl_order = [ 16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15 ]
     
-    // The lengths of the bit length codes are sent in order of decreasing
-    // probability, to avoid transmitting the lengths for unused bit
-    // length codes.
-    
-    static let Buf_size = 8 * 2
+
     
     // see definition of array dist_code below
     static let distCodeLength = 512
@@ -147,7 +118,7 @@ final class Tree {
         var heapIndex: Int
         var overflow = 0 // number of elements with bit length too large
         
-        for bits in 0..<TreeStatic.maxBits {
+        for bits in 0..<Constants.maxBits {
             deflate.blCount[bits] = 0
         }
         
@@ -155,7 +126,7 @@ final class Tree {
         // overflow in the case of the bit length tree).
         tree[deflate.heap[deflate.heapMax] * 2 + 1] = 0 // root of the heap
         
-        for heapIndex = deflate.heapMax + 1; heapIndex < TreeStatic.heapSize; heapIndex += 1 {
+        for heapIndex = deflate.heapMax + 1; heapIndex < Constants.heapSize; heapIndex += 1 {
             let n = deflate.heap[heapIndex]
             var bitLength = tree[tree[n * 2 + 1] * 2 + 1] + 1
             if bitLength > maxLength {
@@ -335,7 +306,7 @@ final class Tree {
         var nextCodes = nextCode
         var tree = tree
         nextCodes[0] = 0
-        for bitsIndex in 1...TreeStatic.maxBits {
+        for bitsIndex in 1...Constants.maxBits {
             code = (code + blCount[bitsIndex - 1]) << 1
             nextCodes[bitsIndex] = code
         }
