@@ -86,13 +86,22 @@ final class Tree {
     // must not have side effects. _dist_code[256] and _dist_code[257] are never
     // used.
     
-    static func dCode(dist: Int) -> Int{
+    static func dCode(dist: Int) -> Int {
         return dist < 256 ? dist_code[dist] : dist_code[256 + (dist >> 7)]
     }
     
     var dynTree: [Int]        // the dynamic tree
     var maxCode: Int          // largest code with non zero frequency
     var statDesc: StaticTree  // the corresponding static tree
+    
+    
+    init() {
+        // TODO: change this
+        self.dynTree = [Int]()
+        self.maxCode = 0
+        self.statDesc = StaticTree.staticBlDesc
+    }
+    
 
     // Compute the optimal bit lengths for a tree and update the total bit length
     // for the current block.
@@ -100,14 +109,14 @@ final class Tree {
     //    above are the tree nodes sorted by increasing frequency.
     // OUT assertions: the field len is set to the optimal bit length, the
     //     array bl_count contains the frequencies for each bit length.
-    //     The length opt_len is updated; static_len is also updated if stree is
+    //     The length optLength is updated; staticLength is also updated if stree is
     //     not null.
     
     func genBitLen(deflate: Deflate) {
         var tree = dynTree
         var extra = statDesc.extraBits
-        var base = statDesc.extraBase
-        var maxLength = statDesc.maxLength
+        let base = statDesc.extraBase
+        let maxLength = statDesc.maxLength
         
 //        int h;              // heap index
 //        int n, m;           // iterate over the tree elements
@@ -115,7 +124,6 @@ final class Tree {
 //        int xbits;          // extra bits
 //        short f;            // frequency
 
-        var heapIndex: Int
         var overflow = 0 // number of elements with bit length too large
         
         for bits in 0..<Constants.maxBits {
@@ -126,7 +134,8 @@ final class Tree {
         // overflow in the case of the bit length tree).
         tree[deflate.heap[deflate.heapMax] * 2 + 1] = 0 // root of the heap
         
-        for heapIndex = deflate.heapMax + 1; heapIndex < Constants.heapSize; heapIndex += 1 {
+        
+        for heapIndex in deflate.heapMax+1..<Constants.heapSize {
             let n = deflate.heap[heapIndex]
             var bitLength = tree[tree[n * 2 + 1] * 2 + 1] + 1
             if bitLength > maxLength {
@@ -136,7 +145,7 @@ final class Tree {
             tree[n * 2 + 1] = bitLength
             // We overwrite tree[n*2+1] which is no longer needed
             
-            if n > Tree.maxCode {
+            if n > maxCode {
                 continue  // not a leaf node
             }
             
@@ -145,12 +154,15 @@ final class Tree {
             if n >= base {
                 extraBits = extra[n - base]
             }
-            var frequency = tree[n * 2]
+            let frequency = tree[n * 2]
             deflate.optLength += frequency * (bitLength + extraBits)
             if let stree = statDesc.staticTree {
                 deflate.staticLength += frequency * (stree[n * 2 + 1] + extraBits)
             }
+
         }
+        
+        
         
         if overflow == 0 {
             return
@@ -171,12 +183,13 @@ final class Tree {
             overflow -= 2
         } while overflow > 0
         
-        
+        var heapIndex = Constants.heapSize - 1
+
         for bitLength in (1...maxLength).reversed() {
             var n = deflate.blCount[bitLength]
             while n > 0 {
                 heapIndex -= 1
-                var m = deflate.heap[heapIndex]
+                let m = deflate.heap[heapIndex]
                 if m > maxCode {
                     continue
                 }
@@ -193,28 +206,27 @@ final class Tree {
     // Update the total bit length for the current block.
     // IN assertion: the field freq is set for all tree elements.
     // OUT assertions: the fields len and code are set to the optimal bit length
-    //     and corresponding code. The length opt_len is updated; static_len is
+    //     and corresponding code. The length optLength is updated; staticLength is
     //     also updated if stree is not null. The field max_code is set.
     func buildTree(deflate: Deflate) {
         var tree = dynTree
-        var elements = statDesc.elements
+        let elements = statDesc.elements
         
         var maxCode = -1 // largest code with non zero frequency
         
         // Construct the initial heap, with least frequent element in
         // heap[1]. The sons of heap[n] are heap[2*n] and heap[2*n+1].
         // heap[0] is not used.
-        deflate.heapLength = 0
-        deflate.heapMax = Tree.heapSize
+        deflate.heap.removeAll()
+        deflate.heapMax = Constants.heapSize
         
         for n in 0..<elements {
-            if tree[n * 2] != 0 {
-                deflate.heapLength -= 1
-                maxCode = n
-                deflate.heap[deflate.heapLength] = n
-                deflate.depth[n] = 0
-            } else {
+            if tree[n * 2] == 0 {
                 tree[n * 2 + 1] = 0
+            } else {
+                maxCode = n
+                deflate.heap.append(n)
+                deflate.depth[n] = 0
             }
         }
         
@@ -222,8 +234,7 @@ final class Tree {
         // and that at least one bit should be sent even if there is only one
         // possible code. So to avoid special checks later on we force at least
         // two codes of non zero frequency.
-        while deflate.heapLength < 2 {
-            deflate.heapLength += 1
+        while deflate.heap.count < 2 {
             var node: Int
             if maxCode < 2 {
                 maxCode += 1
@@ -231,7 +242,7 @@ final class Tree {
             } else {
                 node = 0
             }
-            deflate.heap[deflate.heapLength] = node
+            deflate.heap.append(node)
             tree[node * 2] = 1
             deflate.depth[node] = 0
             deflate.optLength -= 1
@@ -246,8 +257,8 @@ final class Tree {
         // establish sub-heaps of increasing lengths:
         
         
-        for n in (1...deflate.heapLength / 2).reversed() {
-            deflate.pqDownHeap(tree, n)
+        for n in (1...deflate.heap.count / 2).reversed() {
+            deflate.pqDownHeap(tree: tree, k: n)
         }
         
         // Construct the Huffman tree by repeatedly combining the least two
@@ -256,13 +267,13 @@ final class Tree {
         var node = elements                 // next internal node of the tree
         repeat {
             // n = node of least frequency
-            var n = deflate.heap[1]
-            deflate.heap_len -= 1
-            deflate.heap[1] = deflate.heap[deflate.heap_len]
-            deflate.pqDownHeap(tree, 1)
+            let n = deflate.heap[1]
+            let last = deflate.heap.removeLast()
+            deflate.heap[1] = last
+            deflate.pqDownHeap(tree: tree, k: 1)
             
             // m = node of next least frequency
-            var m = deflate.heap[1]
+            let m = deflate.heap[1]
             deflate.heapMax -= 1
             deflate.heap[deflate.heapMax] = n // keep the nodes sorted by frequency
             deflate.heapMax -= 1
@@ -277,8 +288,8 @@ final class Tree {
             // and insert the new node in the heap
             node += 1
             deflate.heap[1] = node
-            deflate.pqDownHeap(tree, 1)
-        } while deflate.heapLength >= 2
+            deflate.pqDownHeap(tree: tree, k: 1)
+        } while deflate.heap.count >= 2
         deflate.heapMax -= 1
         deflate.heap[deflate.heapMax] = deflate.heap[1]
         
@@ -288,7 +299,7 @@ final class Tree {
         genBitLen(deflate: deflate)
         
         // The field len is now set, we can generate the bit codes
-        genCodes(tree: tree, maxCode: maxCode, blCount: deflate.blCount, nextCode: deflate.nextCode)// -> (tree: [Int], nextCode: [Int])
+        Tree.genCodes(tree: tree, maxCode: maxCode, blCount: deflate.blCount, nextCode: deflate.nextCode)// -> (tree: [Int], nextCode: [Int])
 
     }
     
@@ -323,7 +334,7 @@ final class Tree {
             }
             // Now reverse the bits
             
-            tree[n * 2] = biReverse(code: nextCodes[length], length: length)
+            tree[n * 2] = Tree.biReverse(code: nextCodes[length], length: length)
             nextCodes[length] += 1
         }
     }

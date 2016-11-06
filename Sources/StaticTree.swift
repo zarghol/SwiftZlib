@@ -100,8 +100,20 @@ struct StaticTree {
                                          maxLength: Constants.maxBlBits)
     
     let staticTree: [Int]? // static tree or null
-    let extraBits: [Int]?  // extra bits for each code or null
+    let extraBits: [Int]  // extra bits for each code or null
     let extraBase: Int     // base index for extra_bits
     let elements: Int      // max number of elements in the tree
     let maxLength: Int     // max bit length for the codes
+    
+    private init(staticTree: [Int]?,
+                 extraBits: [Int],
+                 extraBase: Int,
+                 elements: Int,
+                 maxLength: Int) {
+        self.staticTree = staticTree
+        self.extraBits = extraBits
+        self.extraBase = extraBase
+        self.elements = elements
+        self.maxLength = maxLength
+    }
 }
