@@ -68,9 +68,9 @@ enum Strategy: Int {
     case huffmanOnly = 2
 }
 
-enum Method {
-    case stored
-    case deflated
+enum Method: Int {
+    case stored = 0
+    case deflated = 8
 }
 
 enum TreeType: Int {
@@ -86,6 +86,8 @@ class Deflate {
     
     private static let maxWBits = 15 // 32K LZ77 window
     private static let defMemLevel = 8
+    
+    private static let presetDict = 0x20
     
     
     private static let configTable: [Config] = {
@@ -260,7 +262,7 @@ class Deflate {
     // are always zero.
     var bi_valid: Int
     
-    var gheader: GZIPHeader? = nil
+    lazy var gheader: GZIPHeader = GZIPHeader()
     
     
     convenience init(stream: ZStream? = nil, level: Int, bits: Int = Deflate.maxWBits, memlevel: Int = Deflate.defMemLevel) throws {
@@ -1369,18 +1371,285 @@ class Deflate {
         return min(lookahead, best_len)
     }
     
-    func deflateEnd() throws {
-        // Deallocate in reverse order of allocations:
-        pendingBuf = nil
-        l_buf = nil
-        head = nil
-        prev = nil
-        window = nil
-        // free
-        // dstate=null;
-        if status == .busy {
-            throw ZError.dataError
+//    func deflateEnd() throws {
+//        // Deallocate in reverse order of allocations:
+//        pendingBuf = nil
+//        l_buf = nil
+//        head = nil
+//        prev = nil
+//        window = nil
+//        // free
+//        // dstate=null;
+//        if status == .busy {
+//            throw ZError.dataError
+//        }
+//    }
+    
+    func deflateParams(level: Int, strategy: Strategy) throws {
+        var level = level
+        if level == Deflate.zDefaultCompression {
+            level = 6
+        }
+    
+        guard level >= 0 && level < 10 else {
+            throw ZError.streamError
+        }
+        let config = Deflate.configTable[level]
+        if config.funcVal != Deflate.configTable[self.level].funcVal && stream!.total_in != 0 {
+            // Flush the last buffer:
+            try stream?.deflate(Flush.partial)
+        }
+    
+        if self.level != level {
+            self.level = level
+            self.maxLazyMatch   = config.maxLazy
+            self.goodMatch      = config.goodLength
+            self.niceMatch      = config.niceLength
+            self.maxChainLength = config.maxChain
+        }
+        self.strategy = strategy
+    }
+    
+    func deflateSetDictionary (dictionary: [UInt8], dictLength: Int) throws {
+        var length = dictLength
+        var index = 0
+        
+        guard status == .initialisation else {
+            throw ZError.streamError
+        }
+        stream.adler.update(dictionary, 0, dictLength)
+    
+        if length < Deflate.minMatch {
+            return
+        }
+        
+        if length > windowSize - Deflate.minMatch {
+            length = windowSize - Deflate.minLookAhead
+            index = dictLength - length // use the tail of the dictionary
+        }
+        for i in 0..<length {
+            window[i] = dictionary[index + i]
+        }
+
+        strstart = length
+        block_start = length
+    
+        // Insert all strings in the hash table (except for the last two bytes).
+        // s->lookahead stays null, so s->ins_h will be recomputed at the next
+        // call of fill_window.
+    
+        ins_h = Int(window[0]) & 0xff
+        ins_h = ((ins_h << hash_shift) ^ (Int(window[1]) & 0xff)) & hash_mask
+    
+        for n in 0..<length-Deflate.minMatch {
+            ins_h = ((ins_h << hash_shift) ^ (Int(window[n + Deflate.minMatch - 1]) & 0xff)) & hash_mask
+            prev[n & windowMask] = UInt8(head[ins_h])
+            head[ins_h] = n
         }
     }
     
+    func deflate(flush: Flush) throws {
+    
+        guard stream.next_out != nil else {
+            throw ZError.streamError
+        }
+        
+        guard stream.next_in != nil || stream.avail_in == 0 else {
+            throw ZError.streamError
+        }
+        
+        guard status != .finish || flush == .finish else {
+            throw ZError.streamError
+        }
+        
+        if stream.avail_out == 0 {
+//            stream.msg = z_errmsg[Z_NEED_DICT-(Z_BUF_ERROR)];
+            throw ZError.bufferError
+        }
+    
+        var old_flush = lastFlush
+        lastFlush = flush
+    
+        // Write the zlib header
+        if status == .initialisation {
+            if wrap == 2 {
+                gheader.put(self)
+                status = .busy
+                stream.adler.reset()
+            } else {
+                var header = (Method.deflated.rawValue + ((windowBits - 8) << 4)) << 8
+                var level_flags = ((level - 1) & 0xff) >> 1
+    
+                level_flags = min(level_flags, 3)
+                
+                header |= level_flags << 6
+                if strstart != 0 {
+                    header |= Deflate.presetDict
+                }
+                header += 31 - (header % 31)
+    
+                status = .busy
+                putIntMSB(w: header)
+    
+    
+                // Save the adler32 of the preset dictionary:
+                if strstart != 0 {
+                    var adler = stream.adler.getValue()
+                    putIntMSB(adler >>> 16)
+                    putIntMSB(adler & 0xffff)
+                }
+                stream.adler.reset()
+            }
+        }
+    
+        // Flush as much pending output as possible
+        if pending != 0 {
+            stream.flush_pending()
+            if stream.avail_out == 0 {
+                // Since avail_out is 0, deflate will be called again with
+                // more output space, but possibly with both pending and
+                // avail_in equal to zero. There won't be anything to do,
+                // but this is not an error situation so make sure we
+                // return OK instead of BUF_ERROR at next call of deflate:
+                lastFlush = Flush.no
+                return
+            }
+    
+            // Make sure there is something to do and avoid duplicate consecutive
+            // flushes. For repeated and useless calls with Z_FINISH, we keep
+            // returning Z_STREAM_END instead of Z_BUFF_ERROR.
+        } else if stream.avail_in == 0 && flush.rawValue <= old_flush.rawValue && flush != .finish {
+//            strm.msg = z_errmsg[Z_NEED_DICT - Z_BUF_ERROR]
+            throw ZError.bufferError
+        }
+    
+        // User must not provide more input after the first FINISH:
+        if status == .finish && stream.avail_in != 0 {
+//            strm.msg = z_errmsg[Z_NEED_DICT - Z_BUF_ERROR]
+            throw ZError.bufferError
+        }
+    
+        // Start a new block or continue the current one.
+        if stream.avail_in != 0 || lookahead != 0 || (flush != .no && status != .finish) {
+            var bstate: Status
+            
+            switch Deflate.configTable[level].funcVal {
+                case .stored:
+                    bstate = deflate_stored(flush: flush)
+
+                case .fast:
+                    bstate = deflate_fast(flush: flush)
+
+                case .slow:
+                    bstate = deflate_slow(flush: flush)
+            }
+    
+            if bstate == .finishStarted || bstate == .finishDone {
+                status = .finish
+            }
+            if bstate == .needMore || bstate == .finishStarted {
+                if stream.avail_out == 0 {
+                    lastFlush = .no // avoid BUF_ERROR next call, see above
+                }
+                return
+                // If flush != Z_NO_FLUSH && avail_out == 0, the next call
+                // of deflate should use the same flush parameter to make sure
+                // that the flush is complete. So we don't have to output an
+                // empty block here, this will be done at next call. This also
+                // ensures that for a very small output buffer, we emit at most
+                // one empty block.
+            }
+    
+            if bstate == .blockDone {
+                if flush == .partial {
+                    _tr_align()
+                } else { // FULL_FLUSH or SYNC_FLUSH
+                    _tr_stored_block(buf: 0, stored_len: 0, eof: false)
+                    // For a full flush, this empty block will be recognized
+                    // as a special marker by inflate_sync().
+                    if flush == .full {
+                        //state.head[s.hash_size-1]=0;
+                        for i in 0..<hash_size { // forget history
+                            head[i] = 0
+                        }
+                    }
+                }
+                stream.flush_pending()
+                if stream.avail_out == 0 {
+                    lastFlush = .no // avoid BUF_ERROR at next call, see above
+                    return
+                }
+            }
+        }
+    
+        if flush != .finish {
+            return
+        }
+        
+        if wrap <= 0 {
+            throw ZError.streamEnd
+        }
+    
+        if wrap == 2 {
+            var adler = stream.adler.getValue()
+            putByte(byte: adler & 0xff)
+            putByte(byte: (adler >> 8) & 0xff)
+            putByte(byte: (adler >> 16) & 0xff)
+            putByte(byte: (adler >> 24) & 0xff)
+            putByte(byte: stream.total_in & 0xff)
+            putByte(byte: (stream.total_in >> 8) & 0xff)
+            putByte(byte: (stream.total_in >> 16) & 0xff)
+            putByte(byte: (stream.total_in >> 24) & 0xff)
+    
+            gheader.setCRC(adler)
+        } else {
+            // Write the zlib trailer (adler32)
+            var adler = stream.adler.getValue()
+            putIntMSB(adler >> 16)
+            putIntMSB(adler & 0xffff)
+        }
+    
+        stream.flush_pending()
+    
+        // If avail_out is zero, the application will call deflate again
+        // to flush the rest.
+        
+        if wrap > 0 {
+            wrap = -wrap // write the trailer only once!
+        }
+        if pending == 0 {
+            throw ZError.streamEnd
+        }
+    }
+    
+    static func deflateCopy(dest: ZStream, src: ZStream) throws {
+    
+        guard src.dstate != nil else {
+            throw ZError.streamError
+        }
+    
+        if src.next_in != nil {
+//            dest.next_in = [UInt8]() // size : src.next_in.length
+            dest.next_in = src.next_in
+        }
+        dest.next_in_index = src.next_in_index
+        dest.avail_in = src.avail_in
+        dest.total_in = src.total_in
+    
+        if src.next_out != nil {
+//            dest.next_out = new byte[src.next_out.length];
+            dest.next_out = src.next_out
+        }
+    
+        dest.next_out_index = src.next_out_index
+        dest.avail_out = src.avail_out
+        dest.total_out = src.total_out
+    
+        dest.msg = src.msg;
+        dest.data_type = src.data_type
+        dest.adler = src.adler.copy()
+    
+        dest.dstate = src.dstate.clone()
+        dest.dstate.strm = dest;
+    }
 }
