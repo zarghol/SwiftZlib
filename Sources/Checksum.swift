@@ -8,9 +8,7 @@
 
 import Foundation
 
-protocol Checksum {
-    mutating func update(buf: [UInt8], index: Int, length: Int)
-    mutating func reset()
-    mutating func reset(initValue: Int)
-    mutating func getValue() -> Int
+public protocol Checksum {
+    func compute(value: UInt32, buffer: [UInt8]) -> UInt32
+    func combine(value1: UInt32, value2: UInt32, length: UInt32) -> UInt32
 }
