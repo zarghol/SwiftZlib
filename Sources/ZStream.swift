@@ -42,6 +42,8 @@ class ZStream {
         self.adler = adler
     }
     
+    // MARK:- Inflate
+    
     func inflateInit(wrapperType: WrapperType) throws {
         try inflateInit(w: ZStream.defWBits, wrapperType: wrapperType)
     }
@@ -106,7 +108,7 @@ class ZStream {
         return istate?.mode == 12 /*DONE*/
     }
     
-    //-------------------------
+    // MARK:- Deflate
     
     
     func deflateInit(level: Int, bits: Int, memlevel: Int, wrapperType: WrapperType) throws {
@@ -143,13 +145,13 @@ class ZStream {
         try deflate.deflate(flush: flush)
     }
     
-    func deflateEnd() throws {
-        guard let deflate = dstate else {
-            throw ZError.streamError
-        }
-        try deflate.deflateEnd()
-        dstate = nil
-    }
+//    func deflateEnd() throws {
+//        guard let deflate = dstate else {
+//            throw ZError.streamError
+//        }
+//        try deflate.deflateEnd()
+//        dstate = nil
+//    }
     
     
     func deflateParams(level: Int, strategy: Strategy) throws {
@@ -170,11 +172,11 @@ class ZStream {
     // through this function so some applications may wish to modify it
     // to avoid allocating a large strm->next_out buffer and copying into it.
     // (See also read_buf()).
-    func flush_pending () {
-        guard var deflate = dstate else {
+    func flush_pending() {
+        guard let deflate = dstate else {
             return
         }
-        var len = max(deflate.pending, avail_out)
+        let len = min(deflate.pending, avail_out)
 
         if len == 0 {
             return
@@ -187,16 +189,87 @@ class ZStream {
 //            //System.out.println("avail_out="+avail_out);
 //        }
     
-        System.arraycopy(dstate.pending_buf, dstate.pending_out, next_out, next_out_index, len);
+        for i in 0..<len {
+            next_out[next_out_index + i] = deflate.pendingBuf[deflate.pendingOut + i]
+        }
     
         next_out_index += len
-        dstate.pending_out += len
+        deflate.pendingOut += len
         total_out += len
         avail_out -= len
         deflate.pending -= len
         if deflate.pending == 0 {
-            deflate.pending_out = 0
+            deflate.pendingOut = 0
         }
     }
-
+    
+    // Read a new buffer from the current input stream, update the adler32
+    // and total number of bytes read.  All deflate() input goes through
+    // this function so some applications may wish to modify it to avoid
+    // allocating a large strm->next_in buffer and copying from it.
+    // (See also flush_pending()).
+    func read_buf(buf: [UInt8], start: Int, size: Int) -> Int {
+        // FIXME: weird things with buf... should be a pointer ??
+        var buf = buf
+        guard let deflate = dstate else {
+            return 0
+        }
+        let len = min(avail_in, size)
+        
+        if len == 0 {
+            return 0
+        }
+        avail_in -= len
+    
+        if deflate.wrap != 0 {
+            adler.update(buf: next_in, index: next_in_index, length: len)
+        }
+        
+        for i in 0..<len {
+            buf[start + i] = next_in[next_in_index + i]
+        }
+        
+        next_in_index  += len
+        total_in += len
+        return len
+    }
+    
+    // MARK:- Others
+    
+    var adlerValue: Int {
+        return self.adler.getValue()
+    }
+    
+    func free() {
+        next_in.removeAll()
+        next_out.removeAll()
+        msg = ""
+    }
+    
+    func setOutput(buf: [UInt8]) {
+        setOutput(buf: buf, offset: 0, length: buf.count)
+    }
+    
+    func setOutput(buf: [UInt8], offset: Int, length: Int) {
+        next_out = buf
+        next_out_index = offset
+        avail_out = length
+    }
+    
+    func setInput(buf: [UInt8], offset: Int, length: Int, append: Bool) {
+        // change || to && because nonsense of if
+        guard length > 0 && append && next_in.count == 0 else {
+            return
+        }
+    
+        if avail_in > 0 && append {
+            next_in.append(contentsOf: buf)
+            next_in_index = 0
+            avail_in += length
+        } else {
+            next_in = buf
+            next_in_index = offset
+            avail_in = length
+        }
+    }
 }

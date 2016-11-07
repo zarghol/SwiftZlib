@@ -111,7 +111,7 @@ class Deflate {
     private static let maxMatch = 258
     private static let minLookAhead = Deflate.minMatch + Deflate.maxMatch + 1
     
-    var stream: ZStream?        // pointer back to this zlib stream
+    var stream: ZStream        // pointer back to this zlib stream
     var status: State        // as the name implies
     var pendingBuf: [UInt8]  // output still pending
 //    int pending_buf_size;  // size of pending_buf
@@ -265,11 +265,11 @@ class Deflate {
     lazy var gheader: GZIPHeader = GZIPHeader()
     
     
-    convenience init(stream: ZStream? = nil, level: Int, bits: Int = Deflate.maxWBits, memlevel: Int = Deflate.defMemLevel) throws {
+    convenience init(stream: ZStream, level: Int, bits: Int = Deflate.maxWBits, memlevel: Int = Deflate.defMemLevel) throws {
         try self.init(stream: stream, level: level, method: Method.deflated, windowBits: bits, memLevel: memlevel, strategy: Strategy.defaultStrat)
     }
     
-    private init(stream: ZStream?, level: Int, method: Method, windowBits: Int, memLevel: Int, strategy: Strategy) throws {
+    private init(stream: ZStream, level: Int, method: Method, windowBits: Int, memLevel: Int, strategy: Strategy) throws {
         var wrap = 1
         stream.msg = nil
 
@@ -409,8 +409,8 @@ class Deflate {
     func deflateReset() {
         stream.total_out = 0
         stream.total_in  = 0
-        stream.msg = nil
-        stream.data_type = BlockType.unknown
+        stream.msg = ""
+        stream.dataType = BlockType.unknown
     
         pending = 0
         pendingOut = 0
@@ -893,7 +893,7 @@ class Deflate {
             lookahead = 0
             
             // Emit a stored block if pending_buf will be full:
-            var max_start = block_start + max_block_size
+            let max_start = block_start + max_block_size
             if strstart == 0 || strstart >= max_start {
                 // strstart == 0 is possible when wraparound on 16-bit machine
                 lookahead = strstart - max_start
@@ -1074,7 +1074,7 @@ class Deflate {
             // Otherwise, window_size == 2*WSIZE so more >= 2.
             // If there was sliding, more >= WSIZE. So in all cases, more >= 2.
             
-            lookahead += stream.read_buf(window, strstart + lookahead, more)
+            lookahead += stream.read_buf(buf: window, start: strstart + lookahead, size: more)
             
             // Initialize the hash value now that we have some input:
             if lookahead >= Deflate.minMatch {
@@ -1144,12 +1144,12 @@ class Deflate {
             // If there was a match at the previous step and the current
             // match is not better, output the previous match:
             if prev_length >= Deflate.minMatch && match_length <= prev_length {
-                var max_insert = strstart + lookahead - Deflate.minMatch
+                let max_insert = strstart + lookahead - Deflate.minMatch
                 // Do not insert strings in hash table beyond this.
                 
                 //          check_match(strstart-1, prev_match, prev_length);
                 
-                var bflush = _tr_tally(dist: strstart - 1 - prev_match, lc: prev_length - Deflate.minMatch)
+                let bflush = _tr_tally(dist: strstart - 1 - prev_match, lc: prev_length - Deflate.minMatch)
                 
                 // Insert in hash table all strings up to the end of the match.
                 // strstart-1 and strstart are already inserted. If there is not
@@ -1213,12 +1213,12 @@ class Deflate {
             // If there was a match at the previous step and the current
             // match is not better, output the previous match:
             if prev_length >= Deflate.minMatch && match_length <= prev_length {
-                var max_insert = strstart + lookahead - Deflate.minMatch
+                let max_insert = strstart + lookahead - Deflate.minMatch
                 // Do not insert strings in hash table beyond this.
                 
                 //          check_match(strstart-1, prev_match, prev_length);
                 
-                var bflush = _tr_tally(dist: strstart - 1 - prev_match, lc: prev_length - Deflate.minMatch)
+                let bflush = _tr_tally(dist: strstart - 1 - prev_match, lc: prev_length - Deflate.minMatch)
                 
                 // Insert in hash table all strings up to the end of the match.
                 // strstart-1 and strstart are already inserted. If there is not
@@ -1253,7 +1253,7 @@ class Deflate {
                 // single literal. If there was a match but the current match
                 // is longer, truncate the previous match to a single literal.
                 
-                var bflush = _tr_tally(dist: 0, lc: Int(window[strstart - 1]) & 0xff)
+                let bflush = _tr_tally(dist: 0, lc: Int(window[strstart - 1]) & 0xff)
                 
                 if bflush {
                     flush_block_only(eof: false)
@@ -1395,9 +1395,9 @@ class Deflate {
             throw ZError.streamError
         }
         let config = Deflate.configTable[level]
-        if config.funcVal != Deflate.configTable[self.level].funcVal && stream!.total_in != 0 {
+        if config.funcVal != Deflate.configTable[self.level].funcVal && stream.total_in != 0 {
             // Flush the last buffer:
-            try stream?.deflate(Flush.partial)
+            try stream.deflate(flush: Flush.partial)
         }
     
         if self.level != level {
@@ -1417,7 +1417,7 @@ class Deflate {
         guard status == .initialisation else {
             throw ZError.streamError
         }
-        stream.adler.update(dictionary, 0, dictLength)
+        stream.adler.update(buf: dictionary, index: 0, length: dictLength)
     
         if length < Deflate.minMatch {
             return
@@ -1495,8 +1495,8 @@ class Deflate {
                 // Save the adler32 of the preset dictionary:
                 if strstart != 0 {
                     var adler = stream.adler.getValue()
-                    putIntMSB(adler >>> 16)
-                    putIntMSB(adler & 0xffff)
+                    putIntMSB(w: adler >> 16)
+                    putIntMSB(w: adler & 0xffff)
                 }
                 stream.adler.reset()
             }
